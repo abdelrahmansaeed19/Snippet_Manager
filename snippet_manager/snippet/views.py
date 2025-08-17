@@ -6,7 +6,6 @@ from django.contrib.auth import login
 from .forms import RegisterForm, UserUpdateForm, ProfileUpdateForm
 from django.contrib import messages
 from django.urls import reverse_lazy
-from .models import Post, Comment
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 
@@ -26,6 +25,19 @@ class CustomLoginView(LoginView):
 
 class CustomLogoutView(LogoutView):
     pass
+
+class RegisterView(FormView):
+    template_name = 'blog/register.html'
+    form_class = RegisterForm
+    redirect_authenticated_user = True
+    success_url = reverse_lazy('profile-detail')
+
+    def form_valid(self, form):
+        user = form.save()
+        if user:
+            login(self.request, user)
+        messages.success(self.request, "Registration successful. You can now log in.")
+        return super().form_valid(form)
 
 class ProfileDetailView(LoginRequiredMixin, TemplateView):
     template_name = 'blog/profile_detail.html'

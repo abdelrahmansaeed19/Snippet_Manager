@@ -80,7 +80,7 @@ DATABASES = {
         # 'ENGINE': 'django.db.backends.sqlite3',
         # 'NAME': BASE_DIR / 'db.sqlite3',
         'ENGINE': 'mssql',
-        'NAME': 'BlogDB',  # Replace with your database name
+        'NAME': 'SnippetDB',  # Replace with your database name
         'HOST': '127.0.0.1,1433',  # Replace with your database host
         'PORT': '',  # Default port for MSSQL
         'OPTIONS': {
