@@ -1,59 +1,116 @@
-from django.shortcuts import render
-from django.views.generic import TemplateView, DetailView, UpdateView, CreateView, ListView, DeleteView
-from django.contrib.auth.views import LoginView, LogoutView, PasswordChangeView, PasswordChangeDoneView, FormView
-from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.contrib.auth import login
-from .forms import RegisterForm, UserUpdateForm, ProfileUpdateForm
-from django.contrib import messages
-from django.urls import reverse_lazy
-from django.contrib.auth.decorators import login_required
+from __future__ import annotations
+from django.shortcuts import get_object_or_404
+from rest_framework import mixins, permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.request import Request
+from rest_framework.response import Response
+from tags.models import Tag
+from .models import Favorite, Snippet
+from .permissions import IsOwnerOrReadOnly
+from .serializers import FavoriteSerializer, SnippetSerializer, SnippetWriteSerializer
 from django.db.models import Q
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
 
-class HomePageView(TemplateView):
-    template_name = 'blog/base.html'
-
-class CustomLoginView(LoginView):
-    redirect_authenticated_user = True
-    template_name = 'blog/login.html'
-    def get_success_url(self):
-        messages.success(self.request, "You have successfully logged in.")
-        return reverse_lazy('home')
+class SnippetViewSet(viewsets.ModelViewSet):
+    """
+    Endpoints:
+    - GET /api/snippets
+    - POST /api/snippets
+    - GET /api/snippets/{id}
+    - PUT /api/snippets/{id}
+    - DELETE /api/snippets/{id}
+    - POST /api/snippets/{id}/tags/{tag_id}
+    - DELETE /api/snippets/{id}/tags/{tag_id}
+    - POST /api/snippets/{id}/favorite
+    - DELETE /api/snippets/{id}/favorite
+    """
+    queryset = Snippet.objects.select_related("user").prefetch_related("tags")
+    permission_classes = (IsOwnerOrReadOnly,)
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     
-    def form_invalid(self, form):
-        messages.error(self.request, "Invalid username or password.")
-        return self.render_to_response(self.get_context_data(form=form))
+    # Fields that can be filtered with `?language=python`
+    filterset_fields = ["language", "user", "tags__name"]
 
-class CustomLogoutView(LogoutView):
-    pass
+    # Fields that can be searched with `?search=keyword`
+    search_fields = ["title", "content", "language", "tags__name"]
 
-class RegisterView(FormView):
-    template_name = 'blog/register.html'
-    form_class = RegisterForm
-    redirect_authenticated_user = True
-    success_url = reverse_lazy('profile-detail')
+    # Fields that can be ordered with `?ordering=created_at` or `?ordering=-created_at`
+    ordering_fields = ["created_at", "updated_at", "title", "language"]
+    ordering = ["-created_at"]  # default ordering
 
-    def form_valid(self, form):
-        user = form.save()
-        if user:
-            login(self.request, user)
-        messages.success(self.request, "Registration successful. You can now log in.")
-        return super().form_valid(form)
 
-class ProfileDetailView(LoginRequiredMixin, TemplateView):
-    template_name = 'blog/profile_detail.html'
+    def get_serializer_class(self): # type: ignore[override]
+        if self.action in {"create", "update", "partial_update"}:
+            return SnippetWriteSerializer
+        return SnippetSerializer
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
 
-class ProfileUpdateView(LoginRequiredMixin, FormView):
-    template_name = 'blog/profile_edit.html'
-    form_class = ProfileUpdateForm
-    success_url = reverse_lazy('profile-detail')
+        # Re-serialize with the full read serializer (includes id, user, tags, etc.)
+        read_serializer = SnippetSerializer(serializer.instance, context={"request": request})
+        headers = self.get_success_headers(read_serializer.data)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
-    http_method_names = ['get', 'post']  # <-- contains "method"
+    
+    def perform_create(self, serializer): # type: ignore[override]
+        serializer.save(user=self.request.user)
 
-    def post(self, request, *args, **kwargs):
-        """Handle POST requests to update user profile details."""
-        return super().post(request, *args, **kwargs)
+    @action(detail=False, methods=["get"], url_path="search")
+    def search(self, request: Request) -> Response:
+        query = request.query_params.get("q", "").strip()
+        if not query:
+            return Response({"detail": "Query parameter 'q' is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-    def form_valid(self, form):
-        form.save()
-        messages.success(self.request, "Your profile has been updated.")
-        return super().form_valid(form)
+        snippets = self.queryset.filter(
+            Q(title__icontains=query) | Q(content__icontains=query) | Q(language__icontains=query)
+        )
+
+        page = self.paginate_queryset(snippets)
+
+        if page is not None:
+            serializer = SnippetSerializer(page, many=True, context={"request": request})
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = SnippetSerializer(snippets, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path=r"tags/(?P<tag_id>[0-9a-f\-]{36})")
+    def add_tag(self, request: Request, pk: str, tag_id: str) -> Response:
+        snippet = self.get_object()
+        self.check_object_permissions(request, snippet)
+        tag = get_object_or_404(Tag, id=tag_id)
+        snippet.tags.add(tag)
+        return Response(SnippetSerializer(snippet, context={"request": request}).data, status=status.HTTP_200_OK)
+    
+    @add_tag.mapping.delete
+    def remove_tag(self, request: Request, pk: str, tag_id: str) -> Response:
+        snippet = self.get_object()
+        self.check_object_permissions(request, snippet)
+        tag = get_object_or_404(Tag, id=tag_id)
+        snippet.tags.remove(tag)
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @action(detail=True, methods=["post", "delete"], url_path="favorite")
+    def favorite(self, request: Request, pk: str) -> Response:
+        snippet = self.get_object()
+        if request.method.lower() == "post":
+            Favorite.objects.get_or_create(snippet=snippet, user=request.user)
+            return Response({"detail": "Favorited."}, status=status.HTTP_201_CREATED)
+        
+        Favorite.objects.filter(snippet=snippet, user=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+class UserFavoriteViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """GET /api/users/{user_id}/favorites"""
+
+    serializer_class = FavoriteSerializer
+    permission_classes = (permissions.IsAuthenticated)
+
+    def get_queryset(self): # type: ignore[override]
+        user_id = self.kwargs["user_id"]
+        return Favorite.objects.select_related("snippet").filter(user_id=user_id)

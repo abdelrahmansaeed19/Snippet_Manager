@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 URL configuration for snippet_manager project.
 
@@ -19,9 +20,7 @@ from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include('snippet.urls')),  # Include URLs from the snippet app
-]
-
-urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('api/', include('snippet.urls')),  # Include URLs from the snippet app
+    path('api/', include('accounts.urls')),  # Include URLs from the accounts app
+    path('api/', include('tags.urls')),  # Include URLs from the tags app
 ]

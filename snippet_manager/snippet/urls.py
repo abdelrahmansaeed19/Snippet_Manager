@@ -1,13 +1,12 @@
-from django.urls import path
-from django.contrib.auth import views as auth_views
-from . import views
-from .views import HomePageView, CustomLoginView, CustomLogoutView
+from __future__ import annotations
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+from .views import SnippetViewSet, UserFavoriteViewSet
+
+router = DefaultRouter()
+router.register(r'snippets', SnippetViewSet, basename='snippet')
 
 urlpatterns = [
-    path('', HomePageView.as_view(), name='home'),
-    path('login/', CustomLoginView.as_view(), name='login'),
-    path('logout/', CustomLogoutView.as_view(next_page='home'), name='logout'),
-    path('register/', views.RegisterView.as_view(), name='register'),
-    path('profile/', views.ProfileDetailView.as_view(), name='profile-detail'),
-    path('profile/edit/', views.ProfileUpdateView.as_view(), name='profile-edit'),
+    path('', include(router.urls)),
+    path("users/<uuid:user_id>/favorites", UserFavoriteViewSet.as_view({"get": "list"}), name="user-favorites"),
 ]
