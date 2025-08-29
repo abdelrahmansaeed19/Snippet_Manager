@@ -10,5 +10,5 @@ urlpatterns = [
     path("auth/token/refresh", TokenRefreshView.as_view(), name="tokenrefresh"),
     path("auth/logout", LogoutView.as_view(), name="auth-logout"),
     # Users
-    path("users/<uuid:user_id>", UserDetailView.as_view(), name="user-detail"),
+    path("users/<int:user_id>", UserDetailView.as_view(), name="user-detail"),
 ]

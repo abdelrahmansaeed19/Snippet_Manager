@@ -11,6 +11,7 @@ from .serializers import FavoriteSerializer, SnippetSerializer, SnippetWriteSeri
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
+from rest_framework.permissions import IsAuthenticated
 
 class SnippetViewSet(viewsets.ModelViewSet):
     """
@@ -26,7 +27,7 @@ class SnippetViewSet(viewsets.ModelViewSet):
     - DELETE /api/snippets/{id}/favorite
     """
     queryset = Snippet.objects.select_related("user").prefetch_related("tags")
-    permission_classes = (IsOwnerOrReadOnly,)
+    permission_classes = (IsOwnerOrReadOnly, IsAuthenticated)
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     
     # Fields that can be filtered with `?language=python`
@@ -59,6 +60,18 @@ class SnippetViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer): # type: ignore[override]
         serializer.save(user=self.request.user)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(
+            {"detail": "Snippet deleted successfully."},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+    def perform_destroy(self, instance):
+        instance.delete()
+    # <<< -------------------- >>>
+
     @action(detail=False, methods=["get"], url_path="search")
     def search(self, request: Request) -> Response:
         query = request.query_params.get("q", "").strip()
@@ -78,7 +91,7 @@ class SnippetViewSet(viewsets.ModelViewSet):
         serializer = SnippetSerializer(snippets, many=True, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["post"], url_path=r"tags/(?P<tag_id>[0-9a-f\-]{36})")
+    @action(detail=True, methods=["post"], url_path=r"tags/(?P<tag_id>[0-9a-f\-]{32,36})")
     def add_tag(self, request: Request, pk: str, tag_id: str) -> Response:
         snippet = self.get_object()
         self.check_object_permissions(request, snippet)
